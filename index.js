@@ -11,7 +11,7 @@ app.get('/stock', async (req, res) => {
   const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: 'Ticker required' });
   try {
-    const url = `https://financialmodelingprep.com/api/v3/income-statement/${ticker}?period=quarter&limit=8&apikey=${API_KEY}`;
+    const url = `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=quarterly&limit=8&apikey=${API_KEY}`;
     const response = await fetch(url);
     const data = await response.json();
     res.json(data);
