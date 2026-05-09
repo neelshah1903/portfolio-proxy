@@ -5,16 +5,22 @@ const fetch = require('node-fetch');
 const app = express();
 app.use(cors());
 
-const API_KEY = 'sObjIgW0wJN3h5wc9Qcg6vE6UKoJa9GH';
+const AV_KEY = 'D5K3X50EYLQUZAC3';
 
 app.get('/stock', async (req, res) => {
   const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: 'Ticker required' });
   try {
-    const url = `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=quarterly&limit=8&apikey=${API_KEY}`;
+    const url = `https://www.alphavantage.co/query?function=INCOME_STATEMENT&symbol=${ticker}&apikey=${AV_KEY}`;
     const response = await fetch(url);
     const data = await response.json();
-    res.json(data);
+    if (data['Note'] || data['Information']) {
+      return res.status(429).json({ error: 'API rate limit hit. Wait 1 minute and try again.' });
+    }
+    if (!data.quarterlyReports || !data.quarterlyReports.length) {
+      return res.status(404).json({ error: `No data found for ${ticker}` });
+    }
+    res.json(data.quarterlyReports);
   } catch(e) {
     res.status(500).json({ error: 'Fetch failed' });
   }
