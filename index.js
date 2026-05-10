@@ -267,7 +267,8 @@ async function fetchFREDHistory(series, limit) {
 
 app.get('/macro-chart', async (req, res) => {
   if (!FRED_API_KEY) return res.status(503).json({ error: 'FRED API key not configured' });
-  if (macroChartCache && Date.now() - macroChartCacheTime < 4 * 60 * 60 * 1000) return res.json(macroChartCache);
+  const force = req.query.force === '1';
+  if (!force && macroChartCache && Date.now() - macroChartCacheTime < 4 * 60 * 60 * 1000) return res.json(macroChartCache);
 
   try {
     const [sp500, nasdaq, djia, nikkei, dgs10, dgs2, vix, wti, brent, fedfunds, cpi, corePce, unrate] = await Promise.all([
@@ -311,7 +312,8 @@ app.get('/macro-chart', async (req, res) => {
 // ── Macro indicators (FRED) ───────────────────────────────
 app.get('/macro', async (req, res) => {
   if (!FRED_API_KEY) return res.status(503).json({ error: 'FRED API key not configured' });
-  if (macroCache && Date.now() - macroCacheTime < 4 * 60 * 60 * 1000) return res.json(macroCache);
+  const force = req.query.force === '1';
+  if (!force && macroCache && Date.now() - macroCacheTime < 4 * 60 * 60 * 1000) return res.json(macroCache);
 
   try {
     const [dgs10, dgs2, vix, cpi, corePce, fedfunds, wti, brent, unrate, sp500, nasdaq, djia, nikkei] = await Promise.all([
