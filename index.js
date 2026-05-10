@@ -8,6 +8,22 @@ app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const FRED_API_KEY = process.env.FRED_API_KEY || '';
+
+// ── FRED macro cache (refresh every 4 hours) ──────────────
+let macroCache = null, macroCacheTime = 0;
+
+async function fetchFRED(series, limit = 2) {
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${FRED_API_KEY}&sort_order=desc&limit=${limit}&file_type=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FRED ${series}: HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.observations || []).filter(o => o.value !== '.');
+}
+
+function fredVal(obs, idx = 0) {
+  return obs[idx] ? parseFloat(obs[idx].value) : null;
+}
 
 // ── NSE helpers ────────────────────────────────────────────
 const NSE_REVENUE = ['sales','revenue from operations','revenue','interest earned','total income','net interest income','income from operations'];
@@ -234,6 +250,48 @@ app.post('/chat', async (req, res) => {
     const data = await r.json();
     res.json({ answer: data.choices[0].message.content.trim() });
   } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Macro indicators (FRED) ───────────────────────────────
+app.get('/macro', async (req, res) => {
+  if (!FRED_API_KEY) return res.status(503).json({ error: 'FRED API key not configured' });
+  if (macroCache && Date.now() - macroCacheTime < 4 * 60 * 60 * 1000) return res.json(macroCache);
+
+  try {
+    const [dgs10, dgs2, vix, cpi, fedfunds, wti, brent, gold, usdinr] = await Promise.all([
+      fetchFRED('DGS10', 2),
+      fetchFRED('DGS2', 2),
+      fetchFRED('VIXCLS', 2),
+      fetchFRED('CPIAUCSL', 13),
+      fetchFRED('FEDFUNDS', 2),
+      fetchFRED('DCOILWTICO', 2),
+      fetchFRED('DCOILBRENTEU', 2),
+      fetchFRED('GOLDAMGBD228NLBM', 2),
+      fetchFRED('DEXINUS', 2),
+    ]);
+
+    const t10 = fredVal(dgs10), t2 = fredVal(dgs2);
+    const cpiLatest = fredVal(cpi, 0), cpiYear = fredVal(cpi, 12);
+    const cpiYoY = cpiLatest && cpiYear ? parseFloat(((cpiLatest - cpiYear) / cpiYear * 100).toFixed(2)) : null;
+
+    macroCache = {
+      dgs10:    { value: t10,               prev: fredVal(dgs10, 1) },
+      dgs2:     { value: t2,                prev: fredVal(dgs2, 1) },
+      spread:   { value: t10 && t2 ? parseFloat((t10 - t2).toFixed(2)) : null },
+      vix:      { value: fredVal(vix),      prev: fredVal(vix, 1) },
+      cpi:      { value: cpiYoY },
+      fedfunds: { value: fredVal(fedfunds), prev: fredVal(fedfunds, 1) },
+      wti:      { value: fredVal(wti),      prev: fredVal(wti, 1) },
+      brent:    { value: fredVal(brent),    prev: fredVal(brent, 1) },
+      gold:     { value: fredVal(gold),     prev: fredVal(gold, 1) },
+      usdinr:   { value: fredVal(usdinr),   prev: fredVal(usdinr, 1) },
+    };
+    macroCacheTime = Date.now();
+    res.json(macroCache);
+  } catch(err) {
+    console.error('[macro error]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
