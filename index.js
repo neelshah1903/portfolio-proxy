@@ -260,33 +260,53 @@ app.get('/macro', async (req, res) => {
   if (macroCache && Date.now() - macroCacheTime < 4 * 60 * 60 * 1000) return res.json(macroCache);
 
   try {
-    const [dgs10, dgs2, vix, cpi, fedfunds, wti, brent, gold, usdinr] = await Promise.all([
+    const [dgs10, dgs2, vix, cpi, corePce, fedfunds, wti, brent, unrate, sp500, nasdaq, djia, nikkei] = await Promise.all([
       fetchFRED('DGS10', 2),
       fetchFRED('DGS2', 2),
       fetchFRED('VIXCLS', 2),
       fetchFRED('CPIAUCSL', 13),
+      fetchFRED('PCEPILFE', 13),   // Core PCE — Fed's preferred inflation measure
       fetchFRED('FEDFUNDS', 2),
       fetchFRED('DCOILWTICO', 2),
       fetchFRED('DCOILBRENTEU', 2),
-      fetchFRED('GOLDAMGBD228NLBM', 2),
-      fetchFRED('DEXINUS', 2),
+      fetchFRED('UNRATE', 2),      // Unemployment rate
+      fetchFRED('SP500', 2),
+      fetchFRED('NASDAQCOM', 2),
+      fetchFRED('DJIA', 2),
+      fetchFRED('NIKKEI225', 2),
     ]);
 
     const t10 = fredVal(dgs10), t2 = fredVal(dgs2);
-    const cpiLatest = fredVal(cpi, 0), cpiYear = fredVal(cpi, 12);
-    const cpiYoY = cpiLatest && cpiYear ? parseFloat(((cpiLatest - cpiYear) / cpiYear * 100).toFixed(2)) : null;
+
+    function yoyPct(obs) {
+      const latest = fredVal(obs, 0), year = fredVal(obs, 12);
+      return latest && year ? parseFloat(((latest - year) / year * 100).toFixed(2)) : null;
+    }
+
+    function idxChange(obs) {
+      const latest = fredVal(obs, 0), prev = fredVal(obs, 1);
+      return latest && prev ? parseFloat(((latest - prev) / prev * 100).toFixed(2)) : null;
+    }
 
     macroCache = {
+      // Indices
+      sp500:    { value: fredVal(sp500),    prev: fredVal(sp500, 1),    chg: idxChange(sp500) },
+      nasdaq:   { value: fredVal(nasdaq),   prev: fredVal(nasdaq, 1),   chg: idxChange(nasdaq) },
+      djia:     { value: fredVal(djia),     prev: fredVal(djia, 1),     chg: idxChange(djia) },
+      nikkei:   { value: fredVal(nikkei),   prev: fredVal(nikkei, 1),   chg: idxChange(nikkei) },
+      // Rates & yields
       dgs10:    { value: t10,               prev: fredVal(dgs10, 1) },
       dgs2:     { value: t2,                prev: fredVal(dgs2, 1) },
       spread:   { value: t10 && t2 ? parseFloat((t10 - t2).toFixed(2)) : null },
-      vix:      { value: fredVal(vix),      prev: fredVal(vix, 1) },
-      cpi:      { value: cpiYoY },
       fedfunds: { value: fredVal(fedfunds), prev: fredVal(fedfunds, 1) },
+      // Volatility & macro
+      vix:      { value: fredVal(vix),      prev: fredVal(vix, 1) },
+      cpi:      { value: yoyPct(cpi) },
+      corePce:  { value: yoyPct(corePce) },
+      unrate:   { value: fredVal(unrate),   prev: fredVal(unrate, 1) },
+      // Commodities
       wti:      { value: fredVal(wti),      prev: fredVal(wti, 1) },
       brent:    { value: fredVal(brent),    prev: fredVal(brent, 1) },
-      gold:     { value: fredVal(gold),     prev: fredVal(gold, 1) },
-      usdinr:   { value: fredVal(usdinr),   prev: fredVal(usdinr, 1) },
     };
     macroCacheTime = Date.now();
     res.json(macroCache);
