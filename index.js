@@ -176,7 +176,8 @@ async function scrapeUS(ticker) {
 
   if (!quarters.length) throw new Error('No quarterly data extracted from Barchart');
 
-  return { ticker, companyName, currency: 'USD', unit: '$ M', revenueLabel: revKey || 'Revenue', profitLabel: patKey || 'Net Income', quarters };
+  // Barchart returns newest-first — reverse to oldest-first for consistency with NSE
+  return { ticker, companyName, currency: 'USD', unit: '$ M', revenueLabel: revKey || 'Revenue', profitLabel: patKey || 'Net Income', quarters: quarters.reverse() };
 }
 
 // ── Routes ────────────────────────────────────────────────
