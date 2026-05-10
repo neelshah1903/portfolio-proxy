@@ -50,7 +50,6 @@ async function scrapeScreener(ticker) {
     html = await fetchScreenerHTML(ticker, false);
     $ = cheerio.load(html);
   }
-  const $ = cheerio.load(html);
 
   const companyName = $('h1').first().text().trim();
 
