@@ -169,7 +169,7 @@ app.get('/test-us', async (req, res) => {
     }));
     res.json({ ticker, quarterCount: quarters.length, sample });
   } catch(e) {
-    res.status(500).json({ error: e.message });
+    res.json({ error: e.message, stack: e.stack?.split('\n').slice(0,3) });
   }
 });
 
