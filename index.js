@@ -29,6 +29,7 @@ function fredVal(obs, idx = 0) {
 const NSE_REVENUE = ['sales','revenue from operations','revenue','interest earned','total income','net interest income','income from operations'];
 const NSE_PROFIT  = ['net profit','profit after tax','pat','net profit after tax','profit for the period'];
 const NSE_EPS     = ['eps in rs','eps','basic eps','diluted eps'];
+const NSE_OPM     = ['opm %','opm%','operating profit margin','opm'];
 
 function matchRow(label, candidates) {
   const l = label.toLowerCase().trim();
@@ -81,11 +82,12 @@ async function scrapeNSE(ticker) {
     rows[label] = vals;
   });
 
-  let revKey = null, patKey = null, epsKey = null;
+  let revKey = null, patKey = null, epsKey = null, opmKey = null;
   for (const key of Object.keys(rows)) {
     if (!revKey && matchRow(key, NSE_REVENUE) && rows[key].some(v => v !== 0)) revKey = key;
     if (!patKey && matchRow(key, NSE_PROFIT)  && rows[key].some(v => v !== 0)) patKey = key;
     if (!epsKey && matchRow(key, NSE_EPS)     && rows[key].some(v => v !== 0)) epsKey = key;
+    if (!opmKey && matchRow(key, NSE_OPM)     && rows[key].some(v => v !== 0)) opmKey = key;
   }
 
   const quarters = headers.map((label, i) => {
@@ -93,7 +95,8 @@ async function scrapeNSE(ticker) {
     const netProfit = patKey ? (rows[patKey][i] ?? 0) : 0;
     const eps       = epsKey ? (rows[epsKey][i] ?? 0) : 0;
     const margin    = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
-    return { label, revenue, netProfit, eps, margin };
+    const opMargin  = opmKey ? (rows[opmKey][i] ?? null) : null; // already a % from Screener
+    return { label, revenue, netProfit, eps, margin, opMargin };
   });
 
   return { ticker, companyName, currency: 'INR', unit: '₹ Cr', revenueLabel: revKey || 'Revenue', profitLabel: patKey || 'Net Profit', quarters };
@@ -111,6 +114,7 @@ function parseBarchartDate(str) {
 const US_REVENUE = ['net revenue','total revenue','revenue','net sales','sales'];
 const US_PROFIT  = ['net income continuous','net income'];
 const US_EPS     = ['eps diluted total ops','eps diluted continuous ops','eps diluted'];
+const US_OPM     = ['operating income','ebit'];
 
 async function scrapeUS(ticker) {
   const url  = `https://www.barchart.com/stocks/quotes/${ticker}/income-statement/quarterly`;
@@ -151,12 +155,13 @@ async function scrapeUS(ticker) {
   if (!headers.length) throw new Error('No quarter headers found on Barchart');
 
   // Match rows
-  let revKey = null, patKey = null, epsKey = null;
+  let revKey = null, patKey = null, epsKey = null, opmKey = null;
   for (const key of Object.keys(rows)) {
     const l = key.toLowerCase();
     if (!revKey && US_REVENUE.some(c => l.includes(c)) && rows[key].some(v => v && v !== '--')) revKey = key;
     if (!patKey && US_PROFIT.some(c => l.includes(c))  && rows[key].some(v => v && v !== '--')) patKey = key;
     if (!epsKey && US_EPS.some(c => l.includes(c))     && rows[key].some(v => v && v !== '--')) epsKey = key;
+    if (!opmKey && US_OPM.some(c => l.includes(c))     && rows[key].some(v => v && v !== '--')) opmKey = key;
   }
 
   // Barchart values are in thousands → convert to millions
@@ -183,11 +188,14 @@ async function scrapeUS(ticker) {
     const revVals   = revKey ? rows[revKey] : [];
     const patVals   = patKey ? rows[patKey] : [];
     const epsVals   = epsKey ? rows[epsKey] : [];
+    const opmVals   = opmKey ? rows[opmKey] : [];
     const revenue   = toMillion(revVals[ci]);
     const netProfit = toMillion(patVals[ci]);
+    const opIncome  = toMillion(opmVals[ci]);
     const eps       = parseFloat((epsVals[ci] || '').replace(/[$,]/g, '')) || 0;
     const margin    = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
-    return { label, revenue, netProfit, eps, margin };
+    const opMargin  = revenue > 0 && opIncome ? parseFloat(((opIncome / revenue) * 100).toFixed(2)) : null;
+    return { label, revenue, netProfit, eps, margin, opMargin };
   }).filter(q => q.revenue !== 0 || q.netProfit !== 0);
 
   if (!quarters.length) throw new Error('No quarterly data extracted from Barchart');
@@ -255,14 +263,14 @@ app.post('/chat', async (req, res) => {
 });
 
 // ── Macro chart history (FRED) ────────────────────────────
-let macroChartCache = null, macroChartCacheTime = 0;
+let macroChartCache = null, macroChartCacheTime = 0; // reset forces fresh fetch on next request
 
 async function fetchFREDHistory(series, limit) {
-  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${FRED_API_KEY}&sort_order=asc&limit=${limit}&file_type=json`;
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${FRED_API_KEY}&sort_order=desc&limit=${limit}&file_type=json`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`FRED ${series}: HTTP ${res.status}`);
   const data = await res.json();
-  return (data.observations || []).filter(o => o.value !== '.').map(o => ({ d: o.date, v: parseFloat(o.value) }));
+  return (data.observations || []).filter(o => o.value !== '.').map(o => ({ d: o.date, v: parseFloat(o.value) })).reverse();
 }
 
 app.get('/macro-chart', async (req, res) => {
