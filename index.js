@@ -5,7 +5,9 @@ const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 const PORT = process.env.PORT || 3000;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 // ── NSE helpers ────────────────────────────────────────────
 const NSE_REVENUE = ['sales','revenue from operations','revenue','interest earned','total income','net interest income','income from operations'];
@@ -189,6 +191,48 @@ app.get('/stock', async (req, res) => {
     res.json({ ...data, market: market.toUpperCase() });
   } catch (err) {
     console.error('[error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI Chat ───────────────────────────────────────────────
+app.post('/chat', async (req, res) => {
+  const { question, portfolio } = req.body;
+  if (!question) return res.status(400).json({ error: 'question required' });
+  if (!GROQ_API_KEY) return res.status(503).json({ error: 'AI not configured on server' });
+
+  // Build portfolio context string
+  const ctx = portfolio && Object.keys(portfolio).length
+    ? Object.entries(portfolio).map(([, d]) => {
+        const qs = d.quarters;
+        const ttmRev = qs.slice(-4).reduce((s, q) => s + q.revenue, 0);
+        const ttmPat = qs.slice(-4).reduce((s, q) => s + q.netProfit, 0);
+        const latest = qs[qs.length - 1];
+        const yoyRev = qs.length >= 5 ? ((qs[qs.length-1].revenue - qs[qs.length-5].revenue) / Math.abs(qs[qs.length-5].revenue) * 100).toFixed(1) : 'N/A';
+        const yoyPat = qs.length >= 5 ? ((qs[qs.length-1].netProfit - qs[qs.length-5].netProfit) / Math.abs(qs[qs.length-5].netProfit) * 100).toFixed(1) : 'N/A';
+        return `${d.ticker} (${d.market}, ${d.unit}): TTM Revenue=${ttmRev.toFixed(0)}, TTM Profit=${ttmPat.toFixed(0)}, Latest Q=${latest?.label}, Latest Revenue=${latest?.revenue}, Latest PAT=${latest?.netProfit}, Latest Margin=${latest?.margin}%, Rev YoY=${yoyRev}%, PAT YoY=${yoyPat}%`;
+      }).join('\n')
+    : 'No portfolio data available.';
+
+  try {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: `You are a sharp financial analyst assistant embedded in a portfolio tracker dashboard. The user's current portfolio:\n${ctx}\n\nAnswer concisely (2-4 sentences max). Use the actual numbers from the portfolio. If something isn't in the data, say so.` },
+          { role: 'user', content: question }
+        ],
+        max_tokens: 300,
+        temperature: 0.5
+      })
+    });
+    if (r.status === 429) return res.status(429).json({ error: 'Daily AI limit reached — resets at midnight. Your portfolio data is still fully available.' });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || r.statusText); }
+    const data = await r.json();
+    res.json({ answer: data.choices[0].message.content.trim() });
+  } catch(err) {
     res.status(500).json({ error: err.message });
   }
 });
