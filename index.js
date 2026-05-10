@@ -26,9 +26,9 @@ function matchRow(label, candidates) {
   return candidates.some(c => l.includes(c));
 }
 
-async function scrapeScreener(ticker) {
-  const url = `https://www.screener.in/company/${ticker}/consolidated/`;
-
+async function fetchScreenerHTML(ticker, consolidated = true) {
+  const path = consolidated ? 'consolidated/' : '';
+  const url = `https://www.screener.in/company/${ticker}/${path}`;
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
@@ -36,10 +36,20 @@ async function scrapeScreener(ticker) {
       'Accept-Language': 'en-US,en;q=0.9',
     },
   });
-
   if (!res.ok) throw new Error(`Screener returned HTTP ${res.status}`);
+  return res.text();
+}
 
-  const html = await res.text();
+async function scrapeScreener(ticker) {
+  let html = await fetchScreenerHTML(ticker, true);
+  let $ = cheerio.load(html);
+
+  // If consolidated page has no data, fall back to standalone
+  const hasData = $('section#quarters table tbody tr td:not(.text)').first().text().trim().length > 0;
+  if (!hasData) {
+    html = await fetchScreenerHTML(ticker, false);
+    $ = cheerio.load(html);
+  }
   const $ = cheerio.load(html);
 
   const companyName = $('h1').first().text().trim();
