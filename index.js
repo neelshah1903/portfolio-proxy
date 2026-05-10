@@ -90,7 +90,7 @@ function parseBarchartDate(str) {
   return MONTH_LABEL[m] ? `${MONTH_LABEL[m]} ${y}` : str.trim();
 }
 
-const US_REVENUE = ['net revenue','total revenue','revenue'];
+const US_REVENUE = ['net revenue','total revenue','revenue','net sales','sales'];
 const US_PROFIT  = ['net income continuous','net income'];
 const US_EPS     = ['eps diluted total ops','eps diluted continuous ops','eps diluted'];
 
@@ -191,32 +191,6 @@ app.get('/stock', async (req, res) => {
     console.error('[error]', err.message);
     res.status(500).json({ error: err.message });
   }
-});
-
-app.get('/debug', async (req, res) => {
-  const { ticker = 'MSFT' } = req.query;
-  try {
-    const url  = `https://www.barchart.com/stocks/quotes/${ticker}/income-statement/quarterly`;
-    const html = await fetchHTML(url, 'https://www.barchart.com');
-    const $    = cheerio.load(html);
-    const table = $('table').filter((_, el) => $(el).text().includes('Net Income')).first();
-    if (!table.length) return res.json({ error: 'no table' });
-    const rows = {}; let headers = [], dateColIndices = [];
-    table.find('tr').each((_, tr) => {
-      const cells = $(tr).find('td');
-      if (!cells.length) return;
-      const label = $(cells[0]).text().replace(/\s+/g, ' ').trim();
-      const vals  = [];
-      cells.each((i, td) => { if (i > 0) vals.push($(td).text().replace(/\s+/g, '').trim()); });
-      if (vals.some(v => /^\d{2}-\d{4}$/.test(v))) {
-        headers = vals;
-        vals.forEach((v, i) => { if (/^\d{2}-\d{4}$/.test(v)) dateColIndices.push(i); });
-        return;
-      }
-      if (label) rows[label] = vals;
-    });
-    res.json({ headers, dateColIndices, rowLabels: Object.keys(rows), sampleRows: Object.fromEntries(Object.entries(rows).slice(0, 15)) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
