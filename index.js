@@ -155,10 +155,10 @@ app.get('/debug', async (req, res) => {
 // Micro-test: verify yahoo-finance2 returns US quarterly data
 app.get('/test-us', async (req, res) => {
   try {
-    const yahooFinance = require('yahoo-finance2').default;
+    const { default: yahooFinance } = await import('yahoo-finance2');
     const ticker = (req.query.ticker || 'AAPL').toUpperCase();
     const result = await yahooFinance.quoteSummary(ticker, {
-      modules: ['incomeStatementHistoryQuarterly', 'defaultKeyStatistics']
+      modules: ['incomeStatementHistoryQuarterly']
     });
     const quarters = result.incomeStatementHistoryQuarterly?.incomeStatementHistory || [];
     const sample = quarters.slice(0, 3).map(q => ({
@@ -169,7 +169,7 @@ app.get('/test-us', async (req, res) => {
     }));
     res.json({ ticker, quarterCount: quarters.length, sample });
   } catch(e) {
-    res.json({ error: e.message, stack: e.stack?.split('\n').slice(0,3) });
+    res.json({ ok: false, error: e.message, type: e.constructor.name });
   }
 });
 
