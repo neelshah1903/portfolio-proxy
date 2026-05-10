@@ -19,17 +19,14 @@ app.get('/stock', async (req, res) => {
     });
     const html = await response.text();
 
-    // Extract company name
     const nameMatch = html.match(/<h1[^>]*>\s*([^<]+)\s*<\/h1>/);
     const companyName = nameMatch ? nameMatch[1].trim() : ticker;
 
-    // Extract quarterly table
     const sectionMatch = html.match(/Quarterly Results[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/);
     if (!sectionMatch) return res.status(404).json({ error: `No quarterly data found for ${ticker}` });
 
     const tbody = sectionMatch[1];
 
-    // Extract headers (quarter labels)
     const headerMatch = html.match(/Quarterly Results[\s\S]*?<thead>([\s\S]*?)<\/thead>/);
     const headers = [];
     if (headerMatch) {
@@ -39,7 +36,6 @@ app.get('/stock', async (req, res) => {
       }
     }
 
-    // Extract rows
     const rows = {};
     const rowMatches = tbody.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g);
     for (const row of rowMatches) {
@@ -53,19 +49,25 @@ app.get('/stock', async (req, res) => {
       }
     }
 
-    // Build quarters array
     const quarters = [];
     const quarterHeaders = headers.slice(1);
     for (let i = 0; i < quarterHeaders.length; i++) {
-      const revenue = parseFloat(rows['Sales']?.[i] || rows['Revenue']?.[i] || 0);
-      const profit = parseFloat(rows['Net Profit']?.[i] || 0);
+      const revenue = parseFloat(
+        rows['Sales']?.[i] ||
+        rows['Revenue']?.[i] ||
+        rows['Net Interest Income']?.[i] ||
+        rows['Total Income']?.[i] ||
+        rows['Revenue from Operations']?.[i] || 0
+      );
+      const profit = parseFloat(
+        rows['Net Profit']?.[i] ||
+        rows['Profit after tax']?.[i] ||
+        rows['PAT']?.[i] ||
+        rows['Net profit']?.[i] || 0
+      );
       const eps = parseFloat(rows['EPS in Rs']?.[i] || 0);
-      quarters.push({
-        label: quarterHeaders[i],
-        revenue,
-        netProfit: profit,
-        eps
-      });
+      const margin = revenue ? (profit / revenue * 100) : 0;
+      quarters.push({ label: quarterHeaders[i], revenue, netProfit: profit, eps, margin });
     }
 
     res.json({ ticker, companyName, quarters });
