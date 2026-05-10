@@ -112,6 +112,37 @@ app.get('/stock', async (req, res) => {
   }
 });
 
+// Debug: see exactly what the scraper finds on Screener.in
+app.get('/debug', async (req, res) => {
+  const { ticker } = req.query;
+  if (!ticker) return res.status(400).json({ error: 'ticker required' });
+  try {
+    const url = `https://www.screener.in/company/${ticker.toUpperCase()}/consolidated/`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    const html = await r.text();
+    const $ = cheerio.load(html);
+    const section = $('section#quarters');
+    const headers = [];
+    section.find('table thead th').each((i, el) => { if (i > 0) headers.push($(el).text().trim()); });
+    const rows = {};
+    section.find('table tbody tr').each((_, tr) => {
+      const cells = $(tr).find('td');
+      if (!cells.length) return;
+      const label = $(cells[0]).text().trim().replace(/[+ ]/g, '').trim();
+      const vals = [];
+      cells.each((i, td) => { if (i > 0) vals.push($(td).text().replace(/\s+/g, '').replace(/,/g, '')); });
+      rows[label] = vals.slice(0, 4);
+    });
+    res.json({ sectionFound: section.length > 0, headers: headers.slice(0, 5), rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.listen(PORT, () => console.log(`Portfolio proxy listening on port ${PORT}`));
