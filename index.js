@@ -62,11 +62,11 @@ async function scrapeScreener(ticker) {
   section.find('table tbody tr').each((_, tr) => {
     const cells = $(tr).find('td');
     if (!cells.length) return;
-    const label = $(cells[0]).text().trim().replace(/\+$/, '').trim();
+    const label = $(cells[0]).text().replace(/\s+/g, ' ').trim().replace(/\s*\+\s*$/, '').trim();
     const values = [];
     cells.each((i, td) => {
       if (i === 0) return;
-      const raw = $(td).text().trim().replace(/,/g, '');
+      const raw = $(td).text().replace(/\s+/g, '').replace(/,/g, '');
       const n = parseFloat(raw);
       values.push(isNaN(n) ? 0 : n);
     });
