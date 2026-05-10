@@ -1,117 +1,103 @@
 const express = require('express');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
+const fetch = require('node-fetch');
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-const PUPPETEER_ARGS = [
-  '--no-sandbox',
-  '--disable-setuid-sandbox',
-  '--disable-dev-shm-usage',
-  '--disable-accelerated-2d-canvas',
-  '--no-first-run',
-  '--no-zygote',
-  '--single-process',
-  '--disable-gpu',
+const REVENUE_LABELS = [
+  'sales', 'revenue from operations', 'revenue',
+  'interest earned', 'total income', 'net interest income',
+  'income from operations',
 ];
+
+const PROFIT_LABELS = [
+  'net profit', 'profit after tax', 'pat', 'net profit after tax',
+  'profit for the period',
+];
+
+const EPS_LABELS = ['eps in rs', 'eps', 'basic eps', 'diluted eps'];
+
+function matchRow(label, candidates) {
+  const l = label.toLowerCase().trim();
+  return candidates.some(c => l.includes(c));
+}
 
 async function scrapeScreener(ticker) {
   const url = `https://www.screener.in/company/${ticker}/consolidated/`;
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: PUPPETEER_ARGS,
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
   });
 
-  try {
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+  if (!res.ok) throw new Error(`Screener returned HTTP ${res.status}`);
 
-    const response = await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    if (!response.ok()) throw new Error(`HTTP ${response.status()} for ${url}`);
+  const html = await res.text();
+  const $ = cheerio.load(html);
 
-    // Wait for quarterly results section
-    await page.waitForSelector('section#quarters table.data-table', { timeout: 30000 });
+  const companyName = $('h1').first().text().trim();
 
-    const result = await page.evaluate(() => {
-      const section = document.querySelector('section#quarters');
-      if (!section) return null;
+  // Find the Quarters section
+  const section = $('section#quarters');
+  if (!section.length) throw new Error('No quarterly section found on page');
 
-      const table = section.querySelector('table.data-table');
-      if (!table) return null;
+  // Extract column headers (quarter labels)
+  const headers = [];
+  section.find('table thead th').each((i, el) => {
+    if (i === 0) return; // skip row-label column
+    headers.push($(el).text().trim());
+  });
 
-      // Extract company name
-      const companyName = (document.querySelector('h1.margin-0') || document.querySelector('h1'))
-        ?.textContent?.trim() || '';
+  if (!headers.length) throw new Error('No quarter headers found');
 
-      // Quarter headers (skip first "TTM" column if present, keep last N quarters)
-      const allHeaders = Array.from(table.querySelectorAll('thead th'))
-        .map(th => th.textContent.trim())
-        .slice(1); // drop the empty row-label column
-
-      // Row data keyed by label
-      const rows = {};
-      table.querySelectorAll('tbody tr').forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll('td'));
-        if (!cells.length) return;
-        const label = cells[0].textContent.trim().replace(/\+$/, '').trim();
-        const values = cells.slice(1).map(td => {
-          const raw = td.textContent.trim().replace(/,/g, '');
-          const n = parseFloat(raw);
-          return isNaN(n) ? 0 : n;
-        });
-        rows[label] = values;
-      });
-
-      return { companyName, headers: allHeaders, rows };
+  // Extract all data rows
+  const rows = {};
+  section.find('table tbody tr').each((_, tr) => {
+    const cells = $(tr).find('td');
+    if (!cells.length) return;
+    const label = $(cells[0]).text().trim().replace(/\+$/, '').trim();
+    const values = [];
+    cells.each((i, td) => {
+      if (i === 0) return;
+      const raw = $(td).text().trim().replace(/,/g, '');
+      const n = parseFloat(raw);
+      values.push(isNaN(n) ? 0 : n);
     });
+    rows[label] = values;
+  });
 
-    return result;
-  } finally {
-    await browser.close();
+  // Find the right rows
+  let revenueKey = null, profitKey = null, epsKey = null;
+
+  for (const key of Object.keys(rows)) {
+    if (!revenueKey && matchRow(key, REVENUE_LABELS) && rows[key].some(v => v !== 0)) revenueKey = key;
+    if (!profitKey  && matchRow(key, PROFIT_LABELS)  && rows[key].some(v => v !== 0)) profitKey = key;
+    if (!epsKey     && matchRow(key, EPS_LABELS)      && rows[key].some(v => v !== 0)) epsKey = key;
   }
+
+  const quarters = headers.map((label, i) => {
+    const revenue   = revenueKey ? (rows[revenueKey][i] ?? 0) : 0;
+    const netProfit = profitKey  ? (rows[profitKey][i]  ?? 0) : 0;
+    const eps       = epsKey     ? (rows[epsKey][i]     ?? 0) : 0;
+    const margin    = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
+    return { label, revenue, netProfit, eps, margin };
+  });
+
+  return {
+    ticker: ticker.toUpperCase(),
+    companyName,
+    revenueLabel: revenueKey || 'Revenue',
+    profitLabel:  profitKey  || 'Net Profit',
+    quarters,
+  };
 }
-
-// Revenue row finder — banks use different labels
-function findRow(rows, candidates) {
-  for (const key of candidates) {
-    if (rows[key] && rows[key].some(v => v !== 0)) return { key, values: rows[key] };
-  }
-  // Partial / case-insensitive fallback
-  const patterns = candidates.map(c => new RegExp(c.replace(/\s+/g, '\\s*'), 'i'));
-  for (const rowName of Object.keys(rows)) {
-    if (patterns.some(p => p.test(rowName)) && rows[rowName].some(v => v !== 0)) {
-      return { key: rowName, values: rows[rowName] };
-    }
-  }
-  return null;
-}
-
-const REVENUE_CANDIDATES = [
-  'Sales',
-  'Revenue from Operations',
-  'Revenue',
-  'Interest Earned',
-  'Total Income',
-  'Net Interest Income',
-];
-
-const PROFIT_CANDIDATES = [
-  'Net Profit',
-  'Profit after tax',
-  'PAT',
-  'Net Profit after Tax',
-  'Profit After Tax',
-];
-
-const EPS_CANDIDATES = ['EPS in Rs', 'EPS', 'Basic EPS', 'Diluted EPS'];
 
 app.get('/stock', async (req, res) => {
   const { ticker } = req.query;
@@ -119,31 +105,9 @@ app.get('/stock', async (req, res) => {
 
   try {
     const data = await scrapeScreener(ticker.toUpperCase());
-    if (!data) return res.status(404).json({ error: 'Could not find quarterly data on Screener' });
-
-    const { companyName, headers, rows } = data;
-
-    const revenueRow = findRow(rows, REVENUE_CANDIDATES);
-    const profitRow  = findRow(rows, PROFIT_CANDIDATES);
-    const epsRow     = findRow(rows, EPS_CANDIDATES);
-
-    const quarters = headers.map((label, i) => {
-      const revenue   = revenueRow ? (revenueRow.values[i] ?? 0) : 0;
-      const netProfit = profitRow  ? (profitRow.values[i]  ?? 0) : 0;
-      const eps       = epsRow     ? (epsRow.values[i]     ?? 0) : 0;
-      const margin    = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
-      return { label, revenue, netProfit, eps, margin };
-    });
-
-    res.json({
-      ticker: ticker.toUpperCase(),
-      companyName,
-      revenueLabel: revenueRow?.key || 'Revenue',
-      profitLabel:  profitRow?.key  || 'Net Profit',
-      quarters,
-    });
+    res.json(data);
   } catch (err) {
-    console.error('[scrape error]', err.message);
+    console.error('[error]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
