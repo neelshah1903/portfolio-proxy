@@ -152,6 +152,27 @@ app.get('/debug', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Micro-test: verify yahoo-finance2 returns US quarterly data
+app.get('/test-us', async (req, res) => {
+  try {
+    const yahooFinance = require('yahoo-finance2').default;
+    const ticker = (req.query.ticker || 'AAPL').toUpperCase();
+    const result = await yahooFinance.quoteSummary(ticker, {
+      modules: ['incomeStatementHistoryQuarterly', 'defaultKeyStatistics']
+    });
+    const quarters = result.incomeStatementHistoryQuarterly?.incomeStatementHistory || [];
+    const sample = quarters.slice(0, 3).map(q => ({
+      date: q.endDate,
+      revenue: q.totalRevenue?.raw,
+      netIncome: q.netIncome?.raw,
+      eps: q.dilutedEps?.raw,
+    }));
+    res.json({ ticker, quarterCount: quarters.length, sample });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.listen(PORT, () => console.log(`Portfolio proxy listening on port ${PORT}`));
