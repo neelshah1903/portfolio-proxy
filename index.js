@@ -136,9 +136,9 @@ async function scrapeUS(ticker) {
   let revKey = null, patKey = null, epsKey = null;
   for (const key of Object.keys(rows)) {
     const l = key.toLowerCase();
-    if (!revKey && US_REVENUE.some(c => l === c) && rows[key].some(v => v && v !== '--')) revKey = key;
-    if (!patKey && US_PROFIT.some(c => l === c)  && rows[key].some(v => v && v !== '--')) patKey = key;
-    if (!epsKey && US_EPS.some(c => l === c)     && rows[key].some(v => v && v !== '--')) epsKey = key;
+    if (!revKey && US_REVENUE.some(c => l.includes(c)) && rows[key].some(v => v && v !== '--')) revKey = key;
+    if (!patKey && US_PROFIT.some(c => l.includes(c))  && rows[key].some(v => v && v !== '--')) patKey = key;
+    if (!epsKey && US_EPS.some(c => l.includes(c))     && rows[key].some(v => v && v !== '--')) epsKey = key;
   }
 
   // Barchart values are in thousands → convert to millions
