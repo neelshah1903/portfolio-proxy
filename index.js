@@ -254,6 +254,60 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// ── Macro chart history (FRED) ────────────────────────────
+let macroChartCache = null, macroChartCacheTime = 0;
+
+async function fetchFREDHistory(series, limit) {
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${FRED_API_KEY}&sort_order=asc&limit=${limit}&file_type=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FRED ${series}: HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.observations || []).filter(o => o.value !== '.').map(o => ({ d: o.date, v: parseFloat(o.value) }));
+}
+
+app.get('/macro-chart', async (req, res) => {
+  if (!FRED_API_KEY) return res.status(503).json({ error: 'FRED API key not configured' });
+  if (macroChartCache && Date.now() - macroChartCacheTime < 4 * 60 * 60 * 1000) return res.json(macroChartCache);
+
+  try {
+    const [sp500, nasdaq, djia, nikkei, dgs10, dgs2, vix, wti, brent, fedfunds, cpi, corePce, unrate] = await Promise.all([
+      fetchFREDHistory('SP500', 504),
+      fetchFREDHistory('NASDAQCOM', 504),
+      fetchFREDHistory('DJIA', 504),
+      fetchFREDHistory('NIKKEI225', 504),
+      fetchFREDHistory('DGS10', 504),
+      fetchFREDHistory('DGS2', 504),
+      fetchFREDHistory('VIXCLS', 504),
+      fetchFREDHistory('DCOILWTICO', 504),
+      fetchFREDHistory('DCOILBRENTEU', 504),
+      fetchFREDHistory('FEDFUNDS', 72),
+      fetchFREDHistory('CPIAUCSL', 72),
+      fetchFREDHistory('PCEPILFE', 72),
+      fetchFREDHistory('UNRATE', 72),
+    ]);
+
+    // Yield spread aligned by date
+    const t10Map = Object.fromEntries(dgs10.map(d => [d.d, d.v]));
+    const t2Map  = Object.fromEntries(dgs2.map(d => [d.d, d.v]));
+    const spread = dgs10.filter(d => t2Map[d.d] != null)
+      .map(d => ({ d: d.d, v: parseFloat((t10Map[d.d] - t2Map[d.d]).toFixed(3)) }));
+
+    // CPI/PCE YoY from monthly levels
+    function yoyArr(arr) {
+      return arr.slice(12).map((d, i) => ({
+        d: d.d, v: parseFloat(((d.v - arr[i].v) / arr[i].v * 100).toFixed(2))
+      }));
+    }
+
+    macroChartCache = { sp500, nasdaq, djia, nikkei, dgs10, dgs2, spread, vix, wti, brent, fedfunds, cpi: yoyArr(cpi), corePce: yoyArr(corePce), unrate };
+    macroChartCacheTime = Date.now();
+    res.json(macroChartCache);
+  } catch(err) {
+    console.error('[macro-chart error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Macro indicators (FRED) ───────────────────────────────
 app.get('/macro', async (req, res) => {
   if (!FRED_API_KEY) return res.status(503).json({ error: 'FRED API key not configured' });
