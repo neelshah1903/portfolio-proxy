@@ -21,6 +21,32 @@ async function fetchFRED(series, limit = 2) {
   return (data.observations || []).filter(o => o.value !== '.');
 }
 
+async function fetchYahooLatest(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`Yahoo ${symbol}: HTTP ${res.status}`);
+  const data = await res.json();
+  const closes = (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  const latest = closes[closes.length - 1];
+  const prev   = closes[closes.length - 2];
+  return { value: latest != null ? parseFloat(latest.toFixed(2)) : null, prev: prev != null ? parseFloat(prev.toFixed(2)) : null };
+}
+
+async function fetchYahooHistory(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=2y`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`Yahoo ${symbol}: HTTP ${res.status}`);
+  const data = await res.json();
+  const result = data.chart?.result?.[0];
+  if (!result) throw new Error(`Yahoo ${symbol}: no data`);
+  const timestamps = result.timestamp || [];
+  const closes = result.indicators?.quote?.[0]?.close || [];
+  return timestamps.map((t, i) => ({
+    d: new Date(t * 1000).toISOString().slice(0, 10),
+    v: closes[i] != null ? parseFloat(closes[i].toFixed(2)) : null
+  })).filter(o => o.v != null);
+}
+
 function fredVal(obs, idx = 0) {
   return obs[idx] ? parseFloat(obs[idx].value) : null;
 }
@@ -287,8 +313,8 @@ app.get('/macro-chart', async (req, res) => {
       fetchFREDHistory('DGS10', 504),
       fetchFREDHistory('DGS2', 504),
       fetchFREDHistory('VIXCLS', 504),
-      fetchFREDHistory('DCOILWTICO', 504),
-      fetchFREDHistory('DCOILBRENTEU', 504),
+      fetchYahooHistory('CL=F'),
+      fetchYahooHistory('BZ=F'),
       fetchFREDHistory('FEDFUNDS', 72),
       fetchFREDHistory('CPIAUCSL', 72),
       fetchFREDHistory('PCEPILFE', 72),
@@ -324,20 +350,20 @@ app.get('/macro', async (req, res) => {
   if (!force && macroCache && Date.now() - macroCacheTime < 4 * 60 * 60 * 1000) return res.json(macroCache);
 
   try {
-    const [dgs10, dgs2, vix, cpi, corePce, fedfunds, wti, brent, unrate, sp500, nasdaq, djia, nikkei] = await Promise.all([
+    const [dgs10, dgs2, vix, cpi, corePce, fedfunds, unrate, sp500, nasdaq, djia, nikkei, wti, brent] = await Promise.all([
       fetchFRED('DGS10', 2),
       fetchFRED('DGS2', 2),
       fetchFRED('VIXCLS', 2),
       fetchFRED('CPIAUCSL', 13),
-      fetchFRED('PCEPILFE', 13),   // Core PCE — Fed's preferred inflation measure
+      fetchFRED('PCEPILFE', 13),
       fetchFRED('FEDFUNDS', 2),
-      fetchFRED('DCOILWTICO', 2),
-      fetchFRED('DCOILBRENTEU', 2),
-      fetchFRED('UNRATE', 2),      // Unemployment rate
+      fetchFRED('UNRATE', 2),
       fetchFRED('SP500', 2),
       fetchFRED('NASDAQCOM', 2),
       fetchFRED('DJIA', 2),
       fetchFRED('NIKKEI225', 2),
+      fetchYahooLatest('CL=F'),
+      fetchYahooLatest('BZ=F'),
     ]);
 
     const t10 = fredVal(dgs10), t2 = fredVal(dgs2);
@@ -368,9 +394,9 @@ app.get('/macro', async (req, res) => {
       cpi:      { value: yoyPct(cpi) },
       corePce:  { value: yoyPct(corePce) },
       unrate:   { value: fredVal(unrate),   prev: fredVal(unrate, 1) },
-      // Commodities
-      wti:      { value: fredVal(wti),      prev: fredVal(wti, 1) },
-      brent:    { value: fredVal(brent),    prev: fredVal(brent, 1) },
+      // Commodities (Yahoo Finance — real-time futures)
+      wti:      { value: wti.value,   prev: wti.prev },
+      brent:    { value: brent.value, prev: brent.prev },
     };
     macroCacheTime = Date.now();
     res.json(macroCache);
